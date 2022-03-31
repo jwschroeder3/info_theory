@@ -22,6 +22,24 @@ mod tests {
     use approx::*;
 
     #[test]
+    fn test_one_hot_cat() {
+        let test_arr: ndarray::Array<u64, Ix2> = array![[1,0,0], [0,1,0], [0,0,1]];
+        let answer: ndarray::Array<u64, Ix1> = array![0,1,2];
+        let result: ndarray::Array<u64, Ix1> = one_hot_to_categorical(&test_arr.view());
+        assert_eq!(result, answer);
+    }
+
+    #[test]
+    fn test_counts_vec() {
+        // three twos, one one, no zeros
+        let test_arr = ndarray::Array1::from_vec(vec![2,1,2,2]);
+        let ans_vec: Vec<usize> = vec![0,1,3];
+        let answer = ndarray::Array1::from_vec(ans_vec);
+        let counts_vec = get_counts_vec(&test_arr.view());
+        assert_eq!(counts_vec, answer);
+    }
+
+    #[test]
     fn test_normalize() {
         let v = vec![2,4,2];
         let v_norm = normalize( v.iter().map(|a| *a as f64).collect() );
@@ -554,6 +572,23 @@ pub fn entropy(counts_vec: ndarray::ArrayView<usize, Ix1>) -> f64 {
     -entropy
 }
 
+/// Decode a 2d one-hot encoding to a 1d categorical vector
+pub fn one_hot_to_categorical(arr: &ndarray::ArrayView<u64, Ix2>) -> ndarray::Array1<u64> {
+    let vec = (0..arr.raw_dim()[0]).map(|x| x as u64).collect();
+    let decoder = Array::<u64, Ix1>::from_vec(vec);
+    arr.t().dot(&decoder)
+}
+
+/// get count of each category in arr
+pub fn get_counts_vec(arr: &ndarray::ArrayView<u64, Ix1>) -> ndarray::Array1<usize> {
+    let mut count_vec: Vec<usize> = vec![0; (*arr.max().unwrap() as usize)+1];
+    for val in arr.iter() {
+        count_vec[*val as usize] += 1;
+    }
+    ndarray::Array::from_vec(count_vec)
+}
+
+/// Adjust values of x such that they sum to 1.0
 fn normalize(x: Vec<f64>) -> Vec<f64> {
     let sum_x: f64 = x.iter().sum();
     x.iter().map(|a| *a / sum_x).collect()
