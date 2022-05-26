@@ -699,12 +699,13 @@ pub fn info_zscore(
     vec1: ndarray::ArrayView::<i64, Ix1>,
     vec2: ndarray::ArrayView::<i64, Ix1>,
 ) -> (f64,bool) {
+    let n_samples = 1000;
     let vec_len = vec2.raw_dim()[0];
     let obs_contingency = construct_contingency_matrix(vec1, vec2);
     let obs_mi = adjusted_mutual_information(obs_contingency.view());
-    let mut mi_vec = ndarray::Array1::zeros(10000);
+    let mut mi_vec = ndarray::Array1::zeros(n_samples);
     let mut passed = true;
-    for i in 0..10000 {
+    for i in 0..n_samples {
         let shuffled = vec2.sample_axis(
             Axis(0),
             vec_len,
