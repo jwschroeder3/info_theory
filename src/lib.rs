@@ -15,6 +15,10 @@ use statrs::function::gamma::ln_gamma;
 // parallelization utilities provided by rayon crate
 use rayon::prelude::*;
 use rayon::ThreadPoolBuilder;
+// random permutation of array
+use ndarray_rand::{SamplingStrategy,RandomExt};
+use rand::thread_rng;
+use rand::seq::SliceRandom;
 
 #[cfg(test)]
 mod tests {
@@ -93,6 +97,52 @@ mod tests {
 
         let contingency = construct_contingency_matrix(av, bv);
         assert_eq!(contingency, answer)
+    }
+
+    #[test]
+    fn test_zscore() {
+        let a = array![0,1,2,0,1,2,2,0,3];
+        let av = a.view();
+        let b = array![1,2,3,1,2,2,1,2,1];
+        let bv = b.view();
+
+        let (zscore,passed) = info_zscore(av, bv);
+
+        println!("z-score: {}, passed: {}", zscore, passed);
+        //assert!(AbsDiff::default().epsilon(1e-6).eq(&ami_answer, &ami));
+
+        let a = array![0,0,0,1,1,1,2,2,2,3,3,3,4,4,4,5,5,5];
+        let av = a.view();
+        let b = array![0,0,0,1,1,1,5,5,5,3,3,3,8,8,8,9,9,9];
+        let bv = b.view();
+
+        let (zscore,passed) = info_zscore(av, bv);
+
+        println!("z-score: {}, passed: {}", zscore, passed);
+        assert!(passed);
+    }
+
+    #[test]
+    fn test_robust() {
+        let a = array![0,1,2,0,1,2,2,0,3];
+        let av = a.view();
+        let b = array![1,2,3,1,2,2,1,2,1];
+        let bv = b.view();
+
+        let (num_passed,num_jacks) = info_robustness(av, bv);
+
+        println!("robustness: {}/{}", num_passed, num_jacks);
+        //assert!(AbsDiff::default().epsilon(1e-6).eq(&ami_answer, &ami));
+
+        let a = array![0,0,0,1,1,1,2,2,2,3,3,3,4,4,4,5,5,5];
+        let av = a.view();
+        let b = array![0,0,0,1,1,1,5,5,5,3,3,3,8,8,8,9,9,9];
+        let bv = b.view();
+
+        let (num_passed,num_jacks) = info_zscore(av, bv);
+        println!("robustness: {}/{}", num_passed, num_jacks);
+
+        //assert!(AbsDiff::default().epsilon(1e-6).eq(&ami_answer, &ami));
     }
 
     #[test]
@@ -602,4 +652,76 @@ pub fn kl_divergence(P: Vec<f64>, Q: Vec<f64>) -> f64 {
         .zip(rel_q)
         .map(|(p, q)| p * (p/q).ln())
         .sum()
+}
+
+/// Similar to FIRE robustness. Gets robustness score for MI 
+/// between two vectors.
+///
+/// Returns a 2-tuple. The first element is the number of
+/// jacknife replicates that passed, the second element
+/// is the total number of jacknife replicates performed.
+/// NOTE: currently only performs 10 jacknife replicates.
+pub fn info_robustness(
+    vec1: ndarray::ArrayView::<i64, Ix1>,
+    vec2: ndarray::ArrayView::<i64, Ix1>,
+) -> (u8, u8) {
+    let jack_num: u8 = 10;
+    let mut num_passed: u8 = 0;
+    let retain_frac: f64 = 0.7;
+    let vec_len = vec2.raw_dim()[0];
+    let num_retained = (vec_len as f64 * retain_frac).floor() as usize;
+    let mut indices: Vec<usize> = (0..vec_len).collect();
+    for i in 0..jack_num {
+        indices.shuffle(&mut thread_rng());
+        let these_indices = &indices[0..num_retained];
+        let (zscore,passed) = info_zscore(
+            vec1.select(Axis(0), these_indices).view(),
+            vec2.select(Axis(0), these_indices).view(),
+        );
+        if passed {
+            num_passed += 1;
+        }
+    }
+    (num_passed,jack_num)
+}
+
+/// Similar to FIRE z-score determination. Gets a z-score
+/// for MI between two vectors by doint 10000 random permutations.
+/// of indices in vec2, calculating MI each permutation, and
+/// calculating z-score as
+/// (observed_mi - mean_permuted_mi) / stdev_permuted_mi
+///
+/// Returns a 2-tuple, the first element of which is the zscore,
+/// and the second element of which is a boolean indicating whether
+/// the observed MI was greater than the permuted MI for ALL
+/// permutations.
+pub fn info_zscore(
+    vec1: ndarray::ArrayView::<i64, Ix1>,
+    vec2: ndarray::ArrayView::<i64, Ix1>,
+) -> (f64,bool) {
+    let vec_len = vec2.raw_dim()[0];
+    let obs_contingency = construct_contingency_matrix(vec1, vec2);
+    let obs_mi = adjusted_mutual_information(obs_contingency.view());
+    let mut mi_vec = ndarray::Array1::zeros(10000);
+    let mut passed = true;
+    for i in 0..10000 {
+        let shuffled = vec2.sample_axis(
+            Axis(0),
+            vec_len,
+            SamplingStrategy::WithoutReplacement,
+        );
+        let cont_i = construct_contingency_matrix(vec1, shuffled.view());
+        let mi_i = adjusted_mutual_information(cont_i.view());
+        // if it's currently passing, check whether obs_mi <= mi_i
+        if passed {
+            if mi_i >= obs_mi {
+                passed = false;
+            }
+        }
+        mi_vec[i] = adjusted_mutual_information(cont_i.view());
+    }
+    let mean = mi_vec.mean().unwrap();
+    let stdev = mi_vec.std(1_f64);
+    let zscore = (obs_mi - mean) / stdev;
+    (zscore, passed)
 }
