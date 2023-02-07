@@ -17,6 +17,8 @@ use rayon::prelude::*;
 use rayon::ThreadPoolBuilder;
 // random permutation of array
 use ndarray_rand::{SamplingStrategy,RandomExt};
+use nalgebra_sparse::{csr::CsrMatrix, coo::CooMatrix};
+use nalgebra::DVector;
 use rand::thread_rng;
 use rand::seq::SliceRandom;
 
@@ -253,6 +255,30 @@ mod tests {
         let cmi = conditional_adjusted_mutual_information(contingency.view());
         println!("negative CMI: {:?}", cmi);
     }
+
+    #[test]
+    fn test_categorize_hits() {
+        let a = arr2(&[[0, 1],[1, 1]]);
+        let b = arr1(&[1, 2]);
+        let c = categorize_hits(&a, &1);
+        let answer = array![2, 3];
+        assert_eq!(c, answer)
+    }
+
+    #[test]
+    fn test_categorize_hits_sparse() {
+        let a = arr2(&[[0, 1],[1, 1]]);
+        let mut a: CooMatrix<i64> = CooMatrix::new(2,2);
+        a.push(0,1,1);
+        a.push(1,0,1);
+        a.push(1,1,1);
+        let csr = CsrMatrix::from(&a);
+        let b = arr1(&[1, 2]);
+        let c = categorize_hits_sparse(&csr, &1);
+        let answer = array![2, 3];
+        //println!("{:?}", c.len());
+        assert_eq!(c, answer)
+    }
 }
 
 /// Get the AIC, as we define it, for a given mutual information, number
@@ -370,6 +396,17 @@ pub fn construct_3d_contingency(
 pub fn categorize_hits(hit_arr: &ndarray::Array<i64, Ix2>, max_count: &i64) -> ndarray::Array<i64, Ix1> {
     let a = arr1(&[1, max_count + 1]); 
     hit_arr.dot(&a)
+}
+
+/// Same as categorize_hits, but for use with a CSR sparse matrix
+pub fn categorize_hits_sparse(hit_arr: &CsrMatrix<i64>, max_count: &i64) -> ndarray::Array<i64, Ix1> {
+    let a: DVector<i64> = DVector::from_column_slice(&[1, max_count + 1]); 
+    let categories = hit_arr * &a;
+    let mut res: Vec<i64> = vec![0; categories.len()];
+    for (i,num) in categories.iter().enumerate() {
+        res[i] = *num;
+    }
+    arr1(&res)
 }
  
 /// Calculates the mutual information between the vectors that gave rise
